@@ -43,11 +43,11 @@ def parse_args():
     parser.add_argument('--vgg_dir', type=str,
                         default='/Users/trognhann/Desktop/AnimeGANv3/vgg19_weight', help='vgg19 weight directory')
 
-    parser.add_argument('--init_G_epoch', type=int, default=1,
+    parser.add_argument('--init_G_epoch', type=int, default=5,
                         help='The number of epochs for generator initialization')
-    parser.add_argument('--epoch', type=int, default=2,
+    parser.add_argument('--epoch', type=int, default=10,
                         help='The number of epochs to run')
-    parser.add_argument('--batch_size', type=int, default=1,
+    parser.add_argument('--batch_size', type=int, default=8,
                         help='The size of batch size')
     parser.add_argument('--save_freq', type=int, default=1,
                         help='The number of ckpt_save_freq')
