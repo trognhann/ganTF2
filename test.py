@@ -1,17 +1,36 @@
+import argparse
+from tqdm import tqdm
+from glob import glob
+import time
 import cv2
 import os
 from tools.GuidedFilter import guided_filter
 from net import generator
 import numpy as np
-import tensorflow as tf
-import time
-from glob import glob
-from tqdm import tqdm
-import argparse
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+def get_device():
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(
+                logical_gpus), "Logical GPUs")
+            return "/gpu:0"
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
+
+    # Check for MPS (Apple Silicon) if using a version of TF that supports it via 'GPU' or similar
+    # In newer TF versions on Mac, MPS is often exposed as a GPU device.
+
+    print("No GPU found, defaulting to CPU.")
+    return "/cpu:0"
 
 
 def check_folder(log_dir):
@@ -57,7 +76,7 @@ def tanh_out_scale(x):
 def parse_args():
     desc = "AnimeGANv3"
     parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoint/generator_v3_Hayao_weight',
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoint/shinkai',
                         help='Directory name to save the checkpoints')
     parser.add_argument('--test_dir', type=str, default='inputs/imgs',
                         help='Directory name of test photos')
@@ -79,15 +98,16 @@ def test(checkpoint_dir, save_dir, test_dir,):
         test_s1 = tanh_out_scale(guided_filter(sigm_out_scale(
             test_s0), sigm_out_scale(test_s0), 2, 0.01))  # 0.25**2
 
-    variables = tf.contrib.framework.get_variables_to_restore()
+    variables = tf.global_variables()
     # generator_var = [var for var in variables if var.name.startswith('generator') and ('main'  in var.name  or 'base'  in var.name) and 'Adam' not in var.name and 'support' not in var.name]
     generator_var = [var for var in variables if var.name.startswith(
         'generator') and 'Adam' not in var.name]
     saver = tf.train.Saver(generator_var)
 
-    # saver = tf.train.Saver()
-    gpu_options = tf.GPUOptions(allow_growth=True)
-    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True, gpu_options=gpu_options)) as sess:
+    # load model
+    device = get_device()
+    print(f"Testing on: {device}")
+    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
         # load model
         ckpt = tf.train.get_checkpoint_state(
             checkpoint_dir)  # checkpoint file information
