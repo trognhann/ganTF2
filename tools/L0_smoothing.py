@@ -21,7 +21,7 @@ def psf2otf(psf, size):
         psfsize = np.shape(psf)
         psfsize = np.array(psfsize)
         padsize = size - psfsize
-        psf = np.lib.pad(psf, ((0, padsize[0]), (0, padsize[1])), 'constant')
+        psf = np.pad(psf, ((0, padsize[0]), (0, padsize[1])), 'constant')
         # Circularly shift otf so that the "center" of the PSF is at the (1,1) element of the array.
         psf = np.roll(psf, -np.array(np.floor(psfsize / 2), 'i'), axis=(0, 1))
         # Compute the OTF
