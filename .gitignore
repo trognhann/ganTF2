@@ -1,0 +1,11 @@
+__pycache__/
+*.png
+*.jpg
+*.npy
+*.pdf
+*.gif
+*.jpg
+*.zip
+*.7z
+*.rar
+.DS_Store
