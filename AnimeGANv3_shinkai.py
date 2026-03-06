@@ -43,8 +43,10 @@ class AnimeGANv3(object):
 
         # Build models
         self.gen = Generator(name='generator')
-        self.disc_support = Discriminator(sn=self.sn, ch=32, name='discriminator')
-        self.disc_main = Discriminator(sn=self.sn, ch=32, name='discriminator_main')
+        self.disc_support = Discriminator(
+            sn=self.sn, ch=32, name='discriminator')
+        self.disc_main = Discriminator(
+            sn=self.sn, ch=32, name='discriminator_main')
 
         # Data generators
         self.real_generator = ImageGenerator(
@@ -57,9 +59,12 @@ class AnimeGANv3(object):
             self.real_generator.num_images, self.anime_image_generator.num_images)
 
         # Optimizers
-        self.init_G_optim = tf.keras.optimizers.Adam(self.init_G_lr, beta_1=0.5, beta_2=0.999)
-        self.G_optim = tf.keras.optimizers.Adam(self.g_lr, beta_1=0.5, beta_2=0.999)
-        self.D_optim = tf.keras.optimizers.Adam(self.d_lr, beta_1=0.5, beta_2=0.999)
+        self.init_G_optim = tf.keras.optimizers.Adam(
+            self.init_G_lr, beta_1=0.5, beta_2=0.999)
+        self.G_optim = tf.keras.optimizers.Adam(
+            self.g_lr, beta_1=0.5, beta_2=0.999)
+        self.D_optim = tf.keras.optimizers.Adam(
+            self.d_lr, beta_1=0.5, beta_2=0.999)
 
         # Checkpoint
         self.checkpoint = tf.train.Checkpoint(
@@ -110,13 +115,16 @@ class AnimeGANv3(object):
     def pretrain_G_step(self, real_photo):
         """Pre-training step for generator."""
         with tf.GradientTape() as tape:
-            generated_s, generated_m, generated = self.compute_generator_output(real_photo, True)
+            generated_s, generated_m, generated = self.compute_generator_output(
+                real_photo, True)
             # Shinkai: only con_loss for generated (no generated_m)
             pre_loss = con_loss(real_photo, generated)
 
         G_vars = self.gen.trainable_variables
         grads = tape.gradient(pre_loss, G_vars)
-        self.init_G_optim.apply_gradients(zip(grads, G_vars))
+        grads_and_vars = [(g, v)
+                          for g, v in zip(grads, G_vars) if g is not None]
+        self.init_G_optim.apply_gradients(grads_and_vars)
         return pre_loss
 
     @tf.function
@@ -124,11 +132,14 @@ class AnimeGANv3(object):
                      fake_superpixel, fake_NLMean_l0):
         """Generator training step."""
         with tf.GradientTape() as tape:
-            generated_s, generated_m, generated = self.compute_generator_output(real_photo, True)
+            generated_s, generated_m, generated = self.compute_generator_output(
+                real_photo, True)
 
             # gray mapping
-            fake_sty_gray = tf.image.grayscale_to_rgb(tf.image.rgb_to_grayscale(generated))
-            anime_sty_gray = tf.image.grayscale_to_rgb(tf.image.rgb_to_grayscale(anime))
+            fake_sty_gray = tf.image.grayscale_to_rgb(
+                tf.image.rgb_to_grayscale(generated))
+            anime_sty_gray = tf.image.grayscale_to_rgb(
+                tf.image.rgb_to_grayscale(anime))
 
             # discriminator predictions (Shinkai: fake first, no reuse needed)
             fake_gray_logit = self.disc_support(fake_sty_gray)
@@ -145,7 +156,8 @@ class AnimeGANv3(object):
             _tv_loss = 0.0001 * total_variation_loss(generated)
             _g_adv_loss = generator_loss(fake_gray_logit)
 
-            G_support_loss = _g_adv_loss + _con_loss + _sty_loss + _rs_loss + _color_loss + _tv_loss
+            G_support_loss = _g_adv_loss + _con_loss + \
+                _sty_loss + _rs_loss + _color_loss + _tv_loss
 
             _tv_loss_m = 0.0001 * total_variation_loss(generated_m)
             _p4_loss = VGG_LOSS(fake_NLMean_l0, generated_m) * 0.5
@@ -157,7 +169,9 @@ class AnimeGANv3(object):
 
         G_vars = self.gen.trainable_variables
         grads = tape.gradient(Generator_loss, G_vars)
-        self.G_optim.apply_gradients(zip(grads, G_vars))
+        grads_and_vars = [(g, v)
+                          for g, v in zip(grads, G_vars) if g is not None]
+        self.G_optim.apply_gradients(grads_and_vars)
 
         return {
             'G_loss': Generator_loss,
@@ -181,12 +195,16 @@ class AnimeGANv3(object):
                      fake_superpixel, fake_NLMean_l0):
         """Discriminator training step."""
         with tf.GradientTape() as tape:
-            generated_s, generated_m, generated = self.compute_generator_output(real_photo, True)
+            generated_s, generated_m, generated = self.compute_generator_output(
+                real_photo, True)
 
             # gray mapping
-            fake_sty_gray = tf.image.grayscale_to_rgb(tf.image.rgb_to_grayscale(generated))
-            anime_sty_gray = tf.image.grayscale_to_rgb(tf.image.rgb_to_grayscale(anime))
-            gray_anime_smooth = tf.image.grayscale_to_rgb(tf.image.rgb_to_grayscale(anime_smooth))
+            fake_sty_gray = tf.image.grayscale_to_rgb(
+                tf.image.rgb_to_grayscale(generated))
+            anime_sty_gray = tf.image.grayscale_to_rgb(
+                tf.image.rgb_to_grayscale(anime))
+            gray_anime_smooth = tf.image.grayscale_to_rgb(
+                tf.image.rgb_to_grayscale(anime_smooth))
 
             # discriminator predictions (support) — Shinkai: fake first
             fake_gray_logit = self.disc_support(fake_sty_gray)
@@ -199,12 +217,16 @@ class AnimeGANv3(object):
 
             D_support_loss = discriminator_loss(anime_gray_logit, fake_gray_logit) \
                 + discriminator_loss_346(gray_anime_smooth_logit) * 5.
-            D_main_loss = discriminator_loss_m(fake_NLMean_logit, generated_m_logit) * 0.1
+            D_main_loss = discriminator_loss_m(
+                fake_NLMean_logit, generated_m_logit) * 0.1
             Discriminator_loss = D_support_loss + D_main_loss
 
-        D_vars = self.disc_support.trainable_variables + self.disc_main.trainable_variables
+        D_vars = self.disc_support.trainable_variables + \
+            self.disc_main.trainable_variables
         grads = tape.gradient(Discriminator_loss, D_vars)
-        self.D_optim.apply_gradients(zip(grads, D_vars))
+        grads_and_vars = [(g, v)
+                          for g, v in zip(grads, D_vars) if g is not None]
+        self.D_optim.apply_gradients(grads_and_vars)
 
         return {
             'D_loss': Discriminator_loss,
@@ -214,7 +236,8 @@ class AnimeGANv3(object):
 
     def train(self):
         # Initialize the models by running a dummy forward pass
-        dummy_input = tf.zeros([1, self.img_size[0], self.img_size[1], self.img_ch])
+        dummy_input = tf.zeros(
+            [1, self.img_size[0], self.img_size[1], self.img_ch])
         self.gen(dummy_input, True)
         self.disc_support(dummy_input)
         self.disc_main(dummy_input)
@@ -264,7 +287,8 @@ class AnimeGANv3(object):
                 else:
                     """style transfer"""
                     # output fake image (forward pass for superpixel/NLMean processing)
-                    generated_s, generated_m, generated = self.compute_generator_output(real_photo_img, True)
+                    generated_s, generated_m, generated = self.compute_generator_output(
+                        real_photo_img, True)
                     inter_out_s = generated_s.numpy()
                     inter_out = generated.numpy()
 
@@ -310,10 +334,14 @@ class AnimeGANv3(object):
                     val_generated_s, val_generated_m, val_generated = self.compute_generator_output(
                         sample_image, False)
 
-                    save_images(sample_image, save_path+'{:03d}_a.jpg'.format(i))
-                    save_images(val_generated.numpy(), save_path+'{:03d}_b.jpg'.format(i))
-                    save_images(val_generated_s.numpy(), save_path+'{:03d}_c.jpg'.format(i))
-                    save_images(val_generated_m.numpy(), save_path+'{:03d}_d.jpg'.format(i))
+                    save_images(sample_image, save_path +
+                                '{:03d}_a.jpg'.format(i))
+                    save_images(val_generated.numpy(), save_path +
+                                '{:03d}_b.jpg'.format(i))
+                    save_images(val_generated_s.numpy(),
+                                save_path+'{:03d}_c.jpg'.format(i))
+                    save_images(val_generated_m.numpy(),
+                                save_path+'{:03d}_d.jpg'.format(i))
 
     @property
     def model_dir(self):

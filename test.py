@@ -9,6 +9,7 @@ import tensorflow as tf
 
 from tools.GuidedFilter import guided_filter
 from net.generator import Generator
+from net.discriminator import Discriminator
 
 
 def get_device():
@@ -18,7 +19,8 @@ def get_device():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            print(len(gpus), "Physical GPUs,", len(
+                logical_gpus), "Logical GPUs")
             return "GPU"
         except RuntimeError as e:
             print(e)
@@ -83,15 +85,31 @@ def test(checkpoint_dir, save_dir, test_dir):
     result_dir = check_folder(save_dir)
     test_files = glob('{}/*.*'.format(test_dir))
 
-    # Build generator
+    # Build models (must match training checkpoint structure)
     gen = Generator(name='generator')
+    disc_support = Discriminator(sn=True, ch=32, name='discriminator')
+    disc_main = Discriminator(sn=True, ch=32, name='discriminator_main')
 
-    # Initialize with dummy input
+    # Initialize with dummy input so variables are created
     dummy = tf.zeros([1, 256, 256, 3])
     gen(dummy, False)
+    disc_support(dummy)
+    disc_main(dummy)
 
-    # Create checkpoint and restore
-    checkpoint = tf.train.Checkpoint(generator=gen)
+    # Build optimizers to match checkpoint structure
+    G_optim = tf.keras.optimizers.Adam(1e-4, beta_1=0.5, beta_2=0.999)
+    D_optim = tf.keras.optimizers.Adam(1e-4, beta_1=0.5, beta_2=0.999)
+    init_G_optim = tf.keras.optimizers.Adam(2e-4, beta_1=0.5, beta_2=0.999)
+
+    # Create checkpoint matching training structure exactly
+    checkpoint = tf.train.Checkpoint(
+        generator=gen,
+        discriminator_support=disc_support,
+        discriminator_main=disc_main,
+        G_optim=G_optim,
+        D_optim=D_optim,
+        init_G_optim=init_G_optim,
+    )
 
     latest = tf.train.latest_checkpoint(checkpoint_dir)
     if latest:

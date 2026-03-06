@@ -67,7 +67,7 @@ def parse_log(filepath):
 
     with open(filepath, 'r') as f:
         for line in f:
-            m = RE_PRETRAIN.match(line.strip())
+            m = RE_PRETRAIN.search(line.strip())
             if m:
                 pretrain["epoch"].append(int(m.group(1)))
                 pretrain["step"].append(int(m.group(2)))
@@ -76,7 +76,7 @@ def parse_log(filepath):
                 pretrain_gs += 1
                 continue
 
-            m = RE_GAN.match(line.strip())
+            m = RE_GAN.search(line.strip())
             if m:
                 gan["epoch"].append(int(m.group(1)))
                 gan["step"].append(int(m.group(2)))
