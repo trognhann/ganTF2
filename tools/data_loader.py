@@ -28,6 +28,9 @@ class ImageGenerator(object):
         return paths
 
     def read_image(self, img_path):
+        # Convert from EagerTensor / bytes to Python str
+        if hasattr(img_path, 'numpy'):
+            img_path = img_path.numpy()
         if isinstance(img_path, bytes):
             img_path = img_path.decode()
 
