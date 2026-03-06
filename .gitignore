@@ -10,3 +10,4 @@ checkpoint/
 *.7z
 *.rar
 .DS_Store
+*.log
