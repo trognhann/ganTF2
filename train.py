@@ -1,32 +1,25 @@
 import time
 import os
-from tools.utils import *
+import tensorflow as tf
+from tools.utils import check_folder, str2bool
 import argparse
 from AnimeGANv3_shinkai import AnimeGANv3
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
 
 
 def get_device():
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         try:
-            # Currently, memory growth needs to be the same across GPUs
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(
-                logical_gpus), "Logical GPUs")
-            return "/gpu:0"
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            return "GPU"
         except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
             print(e)
 
-    # Check for MPS (Apple Silicon) if using a version of TF that supports it via 'GPU' or similar
-    # In newer TF versions on Mac, MPS is often exposed as a GPU device.
-
     print("No GPU found, defaulting to CPU.")
-    return "/cpu:0"
+    return "CPU"
 
 
 """parsing and configuration"""
@@ -35,7 +28,6 @@ def get_device():
 def parse_args():
     desc = "AnimeGANv3"
     parser = argparse.ArgumentParser(description=desc)
-    # parser.add_argument('--style_dataset', type=str, default='Hayao', help='dataset_name')
     parser.add_argument('--style_dataset', type=str,
                         default='Shinkai', help='dataset_name')
     parser.add_argument('--dataset', type=str,
@@ -117,24 +109,16 @@ def train():
     if len(args.img_size) == 1:
         args.img_size = [args.img_size, args.img_size]
 
-    # open session
+    # device info
     device = get_device()
     print(f"Training on: {device}")
 
-    config = tf.ConfigProto(allow_soft_placement=True,
-                            inter_op_parallelism_threads=8,
-                            intra_op_parallelism_threads=8)
+    # Create model (no session needed in TF2)
+    gan = AnimeGANv3(args)
 
-    with tf.Session(config=config) as sess:
-        # with tf.Session() as sess:
-        gan = AnimeGANv3(sess, args)
-        # build graph
-        gan.build_train()
-        # show network architecture
-        show_all_variables()
-        # start train
-        gan.train()
-        print("----- Training finished! -----")
+    # Start training
+    gan.train()
+    print("----- Training finished! -----")
 
 
 if __name__ == '__main__':

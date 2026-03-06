@@ -4,33 +4,27 @@ from glob import glob
 import time
 import cv2
 import os
-from tools.GuidedFilter import guided_filter
-from net import generator
 import numpy as np
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+import tensorflow as tf
+
+from tools.GuidedFilter import guided_filter
+from net.generator import Generator
 
 
 def get_device():
     gpus = tf.config.list_physical_devices('GPU')
     if gpus:
         try:
-            # Currently, memory growth needs to be the same across GPUs
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             logical_gpus = tf.config.list_logical_devices('GPU')
-            print(len(gpus), "Physical GPUs,", len(
-                logical_gpus), "Logical GPUs")
-            return "/gpu:0"
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            return "GPU"
         except RuntimeError as e:
-            # Memory growth must be set before GPUs have been initialized
             print(e)
 
-    # Check for MPS (Apple Silicon) if using a version of TF that supports it via 'GPU' or similar
-    # In newer TF versions on Mac, MPS is often exposed as a GPU device.
-
     print("No GPU found, defaulting to CPU.")
-    return "/cpu:0"
+    return "CPU"
 
 
 def check_folder(log_dir):
@@ -85,62 +79,58 @@ def parse_args():
     return parser.parse_args()
 
 
-def test(checkpoint_dir, save_dir, test_dir,):
-    # tf.reset_default_graph()
+def test(checkpoint_dir, save_dir, test_dir):
     result_dir = check_folder(save_dir)
     test_files = glob('{}/*.*'.format(test_dir))
-    test_real = tf.placeholder(
-        tf.float32, [1, None, None, 3], name='AnimeGANv3_input')
-    with tf.variable_scope("generator", reuse=False):
-        _, _ = generator.G_net(test_real, True)
-    with tf.variable_scope("generator", reuse=True):
-        test_s0, test_m = generator.G_net(test_real, False)
-        test_s1 = tanh_out_scale(guided_filter(sigm_out_scale(
-            test_s0), sigm_out_scale(test_s0), 2, 0.01))  # 0.25**2
 
-    variables = tf.global_variables()
-    # generator_var = [var for var in variables if var.name.startswith('generator') and ('main'  in var.name  or 'base'  in var.name) and 'Adam' not in var.name and 'support' not in var.name]
-    generator_var = [var for var in variables if var.name.startswith(
-        'generator') and 'Adam' not in var.name]
-    saver = tf.train.Saver(generator_var)
+    # Build generator
+    gen = Generator(name='generator')
 
-    # load model
+    # Initialize with dummy input
+    dummy = tf.zeros([1, 256, 256, 3])
+    gen(dummy, False)
+
+    # Create checkpoint and restore
+    checkpoint = tf.train.Checkpoint(generator=gen)
+
+    latest = tf.train.latest_checkpoint(checkpoint_dir)
+    if latest:
+        checkpoint.read(latest).expect_partial()
+        print(" [*] Success to read {}".format(latest))
+    else:
+        print(" [*] Failed to find a checkpoint")
+        return
+
+    # Load model
     device = get_device()
     print(f"Testing on: {device}")
-    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
-        # load model
-        ckpt = tf.train.get_checkpoint_state(
-            checkpoint_dir)  # checkpoint file information
-        if ckpt and ckpt.model_checkpoint_path:
-            ckpt_name = os.path.basename(
-                ckpt.model_checkpoint_path)  # first line
-            saver.restore(sess, os.path.join(checkpoint_dir, ckpt_name))
-            print(
-                " [*] Success to read {}".format(os.path.join(checkpoint_dir, ckpt_name)))
-        else:
-            print(" [*] Failed to find a checkpoint")
-            return
 
-        imgs = []
-        for x in test_files:
-            imgs.append(load_test_data(x))
+    imgs = []
+    for x in test_files:
+        imgs.append(load_test_data(x))
 
-        begin = time.time()
-        for i, sample_file in tqdm(list(enumerate(test_files))):
-            sample_image, scale = np.asarray(imgs[i][0]), imgs[i][1]
-            real, s1, s0, m = sess.run([test_real, test_s1, test_s0, test_m], feed_dict={
-                                       test_real: sample_image})
-            save_images(real, result_dir +
-                        '/a_{0}'.format(os.path.basename(sample_file)), scale)
-            save_images(s1, result_dir +
-                        '/b_{0}'.format(os.path.basename(sample_file)), scale)
-            save_images(s0, result_dir +
-                        '/c_{0}'.format(os.path.basename(sample_file)), scale)
-            save_images(m, result_dir +
-                        '/d_{0}'.format(os.path.basename(sample_file)), scale)
-        end = time.time()
-        print(f'test-time: {end-begin} s')
-        print(f'one image test time : {(end-begin)/(len(test_files))} s')
+    begin = time.time()
+    for i, sample_file in tqdm(list(enumerate(test_files))):
+        sample_image, scale = np.asarray(imgs[i][0]), imgs[i][1]
+
+        # Run inference (eager mode)
+        sample_input = tf.constant(sample_image, dtype=tf.float32)
+        test_s0, test_m = gen(sample_input, False)
+        test_s1 = tanh_out_scale(guided_filter(
+            sigm_out_scale(test_s0), sigm_out_scale(test_s0), 2, 0.01))
+
+        real = sample_image
+        save_images(real, result_dir +
+                    '/a_{0}'.format(os.path.basename(sample_file)), scale)
+        save_images(test_s1.numpy(), result_dir +
+                    '/b_{0}'.format(os.path.basename(sample_file)), scale)
+        save_images(test_s0.numpy(), result_dir +
+                    '/c_{0}'.format(os.path.basename(sample_file)), scale)
+        save_images(test_m.numpy(), result_dir +
+                    '/d_{0}'.format(os.path.basename(sample_file)), scale)
+    end = time.time()
+    print(f'test-time: {end-begin} s')
+    print(f'one image test time : {(end-begin)/(len(test_files))} s')
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 """Color Space Ops."""
 
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 
 def rgb_to_bgr(input, name=None):
@@ -136,10 +136,6 @@ def ypbpr_to_rgb(input, name=None):
     input = tf.convert_to_tensor(input)
     assert input.dtype in (tf.float16, tf.float32, tf.float64)
 
-    # inv of:
-    # [[ 0.299   , 0.587   , 0.114   ],
-    #  [-0.168736,-0.331264, 0.5     ],
-    #  [ 0.5     ,-0.418688,-0.081312]]
     kernel = tf.constant(
         [
             [1.00000000e00, -1.21889419e-06, 1.40199959e00],
@@ -184,10 +180,6 @@ def ydbdr_to_rgb(input, name=None):
     input = tf.convert_to_tensor(input)
     assert input.dtype in (tf.float16, tf.float32, tf.float64)
 
-    # inv of:
-    # [[    0.299,   0.587,    0.114],
-    #  [   -0.45 ,  -0.883,    1.333],
-    #  [   -1.333,   1.116,    0.217]]
     kernel = tf.constant(
         [
             [1.00000000e00, 9.23037161e-05, -5.25912631e-01],
@@ -209,7 +201,6 @@ def rgb_to_hsv(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.rgb_to_hsv for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.rgb_to_hsv(input)
 
@@ -223,7 +214,6 @@ def hsv_to_rgb(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.hsv_to_rgb for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.hsv_to_rgb(input)
 
@@ -237,7 +227,6 @@ def rgb_to_yiq(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.rgb_to_yiq for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.rgb_to_yiq(input)
 
@@ -251,7 +240,6 @@ def yiq_to_rgb(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.yiq_to_rgb for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.yiq_to_rgb(input)
 
@@ -265,7 +253,6 @@ def rgb_to_yuv(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.rgb_to_yuv for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.rgb_to_yuv(input)
 
@@ -279,7 +266,6 @@ def yuv_to_rgb(input, name=None):
     Returns:
       A 3-D (`[H, W, 3]`) or 4-D (`[N, H, W, 3]`) Tensor.
     """
-    # Note: Alias to tf.image.yuv_to_rgb for completeness
     input = tf.convert_to_tensor(input)
     return tf.image.yuv_to_rgb(input)
 
@@ -324,10 +310,6 @@ def xyz_to_rgb(input, name=None):
     input = tf.convert_to_tensor(input)
     assert input.dtype in (tf.float16, tf.float32, tf.float64)
 
-    # inv of:
-    # [[0.412453, 0.35758 , 0.180423],
-    #  [0.212671, 0.71516 , 0.072169],
-    #  [0.019334, 0.119193, 0.950227]]
     kernel = tf.constant(
         [
             [3.24048134, -1.53715152, -0.49853633],
@@ -491,18 +473,3 @@ def rgb_to_grayscale(input, name=None):
     value = tf.tensordot(value, coeff, (-1, -1))
     value = tf.expand_dims(value, -1)
     return tf.image.convert_image_dtype(value, input.dtype)
-
-
-if __name__ == '__main__':
-    import cv2
-    image_foder = '../dataset/Hayao/style/11t.jpg'
-    img = cv2.imread(image_foder,)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)/255
-    p = tf.placeholder(tf.float32, [None, None, 3])
-    with tf.Session() as sess:
-        x = rgb_to_lab(p)
-        a = sess.run(x, feed_dict={p: img})
-
-    y = a[:, :, 0]/100
-    cv2.imshow('dd', y)
-    cv2.waitKey(0)

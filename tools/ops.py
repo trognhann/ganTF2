@@ -1,4 +1,4 @@
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 import os
 from .tf_color_ops import rgb_to_lab
 from .vgg19 import Vgg19
@@ -10,7 +10,7 @@ from .vgg19 import Vgg19
 # l2_decay : tf.keras.regularizers.l2(0.0001)
 
 
-weight_init = tf.initializers.glorot_uniform()
+weight_init = tf.initializers.GlorotUniform()
 
 
 def l2_regularizer(weight=0.0001):
@@ -19,7 +19,7 @@ def l2_regularizer(weight=0.0001):
     return l2
 
 
-weight_regularizer = l2_regularizer(0.0001)
+weight_regularizer_fn = l2_regularizer(0.0001)
 
 
 ##################################################################################
@@ -35,11 +35,11 @@ def relu(x):
 
 
 def tanh(x):
-    return tf.tanh(x)
+    return tf.math.tanh(x)
 
 
 def sigmoid(x):
-    return tf.sigmoid(x)
+    return tf.math.sigmoid(x)
 
 
 def h_swish(x):
@@ -47,192 +47,260 @@ def h_swish(x):
 
 
 ##################################################################################
-# Normalization function
+# Normalization classes (tf.Module)
 ##################################################################################
 
-def GroupNorm(x, G=16, eps=1e-5):
-    # x: input features with shape [N, H, W, C]
-    # gamma, beta: scale and offset, with shape [1, 1, 1, C]
-    # G: number of groups or GN
-    N, H, W, C = x.shape
-    x = tf.reshape(x, [N, G, H, W, C // G])
+class InstanceNorm(tf.Module):
+    def __init__(self, num_features, name='instance_norm'):
+        super().__init__(name=name)
+        self.scale = tf.Variable(tf.ones([num_features]), name='scale')
+        self.offset = tf.Variable(tf.zeros([num_features]), name='offset')
+        self.epsilon = 1e-5
 
-    gamma = tf.Variable(tf.ones([x.get_shape()[-1]]), trainable=True)
-    beta = tf.Variable(tf.zeros([x.get_shape()[-1]]), trainable=True)
-
-    mean, var = tf.nn.moments(x, [2, 3, 4], keep_dims=True)
-    x = (x - mean) / tf.sqrt(var + eps)
-
-    x = tf.reshape(x, [N, H, W, C])
-
-    return x * gamma + beta
-
-
-def instance_norm(x, scope=None):
-    with tf.variable_scope(scope, default_name="instance_norm"):
-        depth = x.get_shape()[-1]
-        scale = tf.get_variable(
-            "scale", [depth], initializer=tf.ones_initializer())
-        offset = tf.get_variable(
-            "offset", [depth], initializer=tf.zeros_initializer())
-        mean, variance = tf.nn.moments(x, [1, 2], keep_dims=True)
-        epsilon = 1e-5
-        inv = tf.rsqrt(variance + epsilon)
+    def __call__(self, x):
+        mean, variance = tf.nn.moments(x, [1, 2], keepdims=True)
+        inv = tf.math.rsqrt(variance + self.epsilon)
         normalized = (x - mean) * inv
-        return scale * normalized + offset
+        return self.scale * normalized + self.offset
 
 
-def layer_norm(x, scope='layer_norm'):
-    with tf.variable_scope(scope):
-        depth = x.get_shape()[-1]
-        scale = tf.get_variable(
-            "scale", [depth], initializer=tf.ones_initializer())
-        offset = tf.get_variable(
-            "offset", [depth], initializer=tf.zeros_initializer())
-        mean, variance = tf.nn.moments(x, [1, 2, 3], keep_dims=True)
-        epsilon = 1e-5
-        inv = tf.rsqrt(variance + epsilon)
+class LayerNorm(tf.Module):
+    def __init__(self, num_features, name='layer_norm'):
+        super().__init__(name=name)
+        self.scale = tf.Variable(tf.ones([num_features]), name='scale')
+        self.offset = tf.Variable(tf.zeros([num_features]), name='offset')
+        self.epsilon = 1e-5
+
+    def __call__(self, x):
+        mean, variance = tf.nn.moments(x, [1, 2, 3], keepdims=True)
+        inv = tf.math.rsqrt(variance + self.epsilon)
         normalized = (x - mean) * inv
-        return scale * normalized + offset
+        return self.scale * normalized + self.offset
 
 
-def batch_norm(x, is_training=True, scope='batch_norm'):
-    with tf.variable_scope(scope):
-        return batch_norm_wrapper(x, is_training)
+class BatchNorm(tf.Module):
+    def __init__(self, num_features, decay=0.999, epsilon=0.001, name='batch_norm'):
+        super().__init__(name=name)
+        self.scale = tf.Variable(tf.ones([num_features]), name='scale')
+        self.beta = tf.Variable(tf.zeros([num_features]), name='beta')
+        self.pop_mean = tf.Variable(tf.zeros([num_features]), trainable=False, name='pop_mean')
+        self.pop_var = tf.Variable(tf.ones([num_features]), trainable=False, name='pop_var')
+        self.decay = decay
+        self.epsilon = epsilon
+
+    def __call__(self, x, is_training=True):
+        if is_training:
+            batch_mean, batch_var = tf.nn.moments(x, [0, 1, 2])
+            self.pop_mean.assign(self.pop_mean * self.decay + batch_mean * (1 - self.decay))
+            self.pop_var.assign(self.pop_var * self.decay + batch_var * (1 - self.decay))
+            return tf.nn.batch_normalization(x, batch_mean, batch_var, self.beta, self.scale, self.epsilon)
+        else:
+            return tf.nn.batch_normalization(x, self.pop_mean, self.pop_var, self.beta, self.scale, self.epsilon)
 
 
-def batch_norm_wrapper(inputs, is_training, decay=0.999, epsilon=0.001):
-    scale = tf.Variable(tf.ones([inputs.get_shape()[-1]]))
-    beta = tf.Variable(tf.zeros([inputs.get_shape()[-1]]))
-    pop_mean = tf.Variable(tf.zeros([inputs.get_shape()[-1]]), trainable=False)
-    pop_var = tf.Variable(tf.ones([inputs.get_shape()[-1]]), trainable=False)
-    if is_training:
-        batch_mean, batch_var = tf.nn.moments(inputs, [0, 1, 2])
-        train_mean = tf.assign(pop_mean, pop_mean *
-                               decay + batch_mean * (1 - decay))
-        train_var = tf.assign(pop_var, pop_var * decay +
-                              batch_var * (1 - decay))
-        with tf.control_dependencies([train_mean, train_var]):
-            return tf.nn.batch_normalization(inputs, batch_mean, batch_var, beta, scale, epsilon)
-    else:
-        return tf.nn.batch_normalization(inputs, pop_mean, pop_var, beta, scale, epsilon)
+##################################################################################
+# Spectral normalization
+##################################################################################
 
+class SpectralNorm(tf.Module):
+    """Wraps a weight variable with spectral normalization."""
+    def __init__(self, w_shape, name='spectral_norm'):
+        super().__init__(name=name)
+        self.w = tf.Variable(weight_init(w_shape), name='kernel')
+        self.u = tf.Variable(
+            tf.random.truncated_normal([1, w_shape[-1]]),
+            trainable=False, name='u')
 
-def spectral_norm(w, iteration=1):
-    w_shape = w.shape.as_list()
-    w = tf.reshape(w, [-1, w_shape[-1]])
+    def __call__(self):
+        w_shape = self.w.shape.as_list()
+        w = tf.reshape(self.w, [-1, w_shape[-1]])
 
-    u = tf.get_variable(
-        "u", [1, w_shape[-1]], initializer=tf.truncated_normal_initializer(), trainable=False)
-
-    u_hat = u
-    v_hat = None
-    for i in range(iteration):
-        """
-        power iteration
-        Usually iteration = 1 will be enough
-        """
+        u_hat = self.u
         v_ = tf.matmul(u_hat, tf.transpose(w))
         v_hat = l2_norm(v_)
-
         u_ = tf.matmul(v_hat, w)
         u_hat = l2_norm(u_)
 
-    sigma = tf.matmul(tf.matmul(v_hat, w), tf.transpose(u_hat))
-    w_norm = w / sigma
+        sigma = tf.matmul(tf.matmul(v_hat, w), tf.transpose(u_hat))
+        w_norm = w / sigma
 
-    with tf.control_dependencies([u.assign(u_hat)]):
+        self.u.assign(u_hat)
         w_norm = tf.reshape(w_norm, w_shape)
-
-    return w_norm
+        return w_norm
 
 
 def l2_norm(v, eps=1e-12):
     return v / (tf.reduce_sum(v ** 2) ** 0.5 + eps)
 
+
 ##################################################################################
-# Layer
+# Layer classes (tf.Module)
 ##################################################################################
 
+class ConvLayer(tf.Module):
+    """Conv layer with optional spectral norm, padding, and bias."""
+    def __init__(self, in_channels, channels, kernel=4, stride=2,
+                 sn=False, pad_type='reflect', use_bias=False, name='conv'):
+        super().__init__(name=name)
+        self.kernel_size = kernel
+        self.stride = stride
+        self.pad_type = pad_type
+        self.use_bias = use_bias
+        self.sn = sn
 
-def conv(x, channels, kernel=4, stride=2, sn=False, pad_type='reflect', use_bias=False, scope='conv_0'):
-    with tf.variable_scope(scope):
+        # Compute padding
         if (kernel - stride) % 2 == 0:
             pad = (kernel - stride) // 2
-            pad_top, pad_bottom, pad_left, pad_right = pad, pad, pad, pad
-
+            self.pad_top = self.pad_bottom = self.pad_left = self.pad_right = pad
         else:
             pad = (kernel - stride) // 2
-            pad_bottom, pad_right = pad, pad,
-            pad_top, pad_left = kernel - stride - pad_bottom, kernel - stride - pad_right
+            self.pad_bottom = self.pad_right = pad
+            self.pad_top = kernel - stride - self.pad_bottom
+            self.pad_left = kernel - stride - self.pad_right
 
-        if pad_type == 'zero':
-            x = tf.pad(x, [[0, 0], [pad_top, pad_bottom],
-                       [pad_left, pad_right], [0, 0]])
-        if pad_type == 'reflect':
-            x = tf.pad(x, [[0, 0], [pad_top, pad_bottom], [
-                       pad_left, pad_right], [0, 0]], mode='REFLECT')
-
+        w_shape = [kernel, kernel, in_channels, channels]
         if sn:
-            w = tf.get_variable("kernel", shape=[kernel, kernel, x.get_shape(
-            )[-1], channels], initializer=weight_init, regularizer=weight_regularizer)
-            x = tf.nn.conv2d(input=x, filter=spectral_norm(w), strides=[
-                             1, stride, stride, 1], padding='VALID')
-            if use_bias:
-                bias = tf.get_variable(
-                    "bias", [channels], initializer=tf.constant_initializer(0.0))
-                x = tf.nn.bias_add(x, bias)
-
+            self.sn_wrapper = SpectralNorm(w_shape, name='sn')
         else:
-            w = tf.get_variable("kernel", shape=[kernel, kernel, x.get_shape(
-            )[-1], channels], initializer=weight_init, regularizer=weight_regularizer)
-            x = tf.nn.conv2d(input=x, filter=w, strides=[
-                             1, stride, stride, 1], padding='VALID')
-            if use_bias:
-                bias = tf.get_variable(
-                    "bias", [channels], initializer=tf.constant_initializer(0.0))
-                x = tf.nn.bias_add(x, bias)
+            self.w = tf.Variable(weight_init(w_shape), name='kernel')
+
+        if use_bias:
+            self.bias = tf.Variable(tf.zeros([channels]), name='bias')
+
+    def __call__(self, x):
+        if self.pad_type == 'zero':
+            x = tf.pad(x, [[0, 0], [self.pad_top, self.pad_bottom],
+                       [self.pad_left, self.pad_right], [0, 0]])
+        elif self.pad_type == 'reflect':
+            x = tf.pad(x, [[0, 0], [self.pad_top, self.pad_bottom],
+                       [self.pad_left, self.pad_right], [0, 0]], mode='REFLECT')
+
+        w = self.sn_wrapper() if self.sn else self.w
+        x = tf.nn.conv2d(input=x, filters=w, strides=[1, self.stride, self.stride, 1], padding='VALID')
+
+        if self.use_bias:
+            x = tf.nn.bias_add(x, self.bias)
         return x
 
 
-def Conv2D(inputs, filters, kernel_size=3, strides=1, padding='VALID', Use_bias=None, activation_fn=None, scope='conv2d'):
-    if (kernel_size - strides) % 2 == 0:
-        pad = (kernel_size - strides) // 2
-        pad_top, pad_bottom, pad_left, pad_right = pad, pad, pad, pad
-    else:
-        pad = (kernel_size - strides) // 2
-        pad_bottom, pad_right = pad, pad,
-        pad_top, pad_left = kernel_size - strides - \
-            pad_bottom,  kernel_size - strides - pad_right
+class Conv2DLayer(tf.Module):
+    """Conv2D layer with reflect padding."""
+    def __init__(self, in_channels, filters, kernel_size=3, strides=1,
+                 use_bias=False, activation_fn=None, name='conv2d'):
+        super().__init__(name=name)
+        self.kernel_size = kernel_size
+        self.strides = strides
+        self.activation_fn = activation_fn
+        self.use_bias = use_bias
 
-    inputs = tf.pad(inputs, [[0, 0], [pad_top, pad_bottom], [
-                    pad_left, pad_right], [0, 0]], mode="REFLECT")
-    with tf.variable_scope(scope):
-        w = tf.get_variable("kernel", shape=[kernel_size, kernel_size, inputs.get_shape(
-        )[-1], filters], initializer=weight_init, regularizer=weight_regularizer)
-        x = tf.nn.conv2d(input=inputs, filter=w, strides=[
-                         1, strides, strides, 1], padding=padding)
-        if Use_bias is not None:
-            bias = tf.get_variable("bias", [
-                                   filters], initializer=Use_bias if Use_bias is not None else tf.zeros_initializer())
-            x = tf.nn.bias_add(x, bias)
-        if activation_fn:
-            x = activation_fn(x)
+        if (kernel_size - strides) % 2 == 0:
+            pad = (kernel_size - strides) // 2
+            self.pad_top = self.pad_bottom = self.pad_left = self.pad_right = pad
+        else:
+            pad = (kernel_size - strides) // 2
+            self.pad_bottom = self.pad_right = pad
+            self.pad_top = kernel_size - strides - self.pad_bottom
+            self.pad_left = kernel_size - strides - self.pad_right
+
+        self.w = tf.Variable(
+            weight_init([kernel_size, kernel_size, in_channels, filters]),
+            name='kernel')
+
+        if use_bias:
+            self.bias_var = tf.Variable(tf.zeros([filters]), name='bias')
+
+    def __call__(self, x):
+        x = tf.pad(x, [[0, 0], [self.pad_top, self.pad_bottom],
+                   [self.pad_left, self.pad_right], [0, 0]], mode="REFLECT")
+        x = tf.nn.conv2d(input=x, filters=self.w,
+                         strides=[1, self.strides, self.strides, 1], padding='VALID')
+        if self.use_bias:
+            x = tf.nn.bias_add(x, self.bias_var)
+        if self.activation_fn:
+            x = self.activation_fn(x)
         return x
 
 
-def Conv2d_LN_LReLU(inputs, filters, kernel_size=3, strides=1, name=None, padding='VALID', Use_bias=None):
-    x = Conv2D(inputs, filters, kernel_size, strides,
-               padding=padding, Use_bias=Use_bias)
-    x = layer_norm(x, scope=name)
-    return lrelu(x)
+class LADE_Layer(tf.Module):
+    """Learnable Affine Denormalization layer."""
+    def __init__(self, in_channels, name='LADE'):
+        super().__init__(name=name)
+        self.conv = Conv2DLayer(in_channels, in_channels, 1, 1, name='conv_IN')
+        self.eps = 1e-5
+
+    def __call__(self, x):
+        tx = self.conv(x)
+        t_mean, t_sigma = tf.nn.moments(tx, axes=[1, 2], keepdims=True)
+        in_mean, in_sigma = tf.nn.moments(x, axes=[1, 2], keepdims=True)
+        x_in = (x - in_mean) / (tf.sqrt(in_sigma + self.eps))
+        x = x_in * (tf.sqrt(t_sigma + self.eps)) + t_mean
+        return x
 
 
-def Conv2d_IN_LReLU(inputs, filters, kernel_size=3, strides=1, name=None, padding='VALID', Use_bias=None):
-    x = Conv2D(inputs, filters, kernel_size, strides,
-               padding=padding, Use_bias=Use_bias)
-    x = instance_norm(x, scope=name)
-    return lrelu(x)
+class LADE_D_Layer(tf.Module):
+    """LADE for Discriminator (with optional spectral norm)."""
+    def __init__(self, in_channels, sn=False, name='LADE_D'):
+        super().__init__(name=name)
+        self.conv = ConvLayer(in_channels, in_channels, kernel=1, stride=1,
+                              sn=sn, pad_type='zero', name='conv_IN')
+        self.eps = 1e-5
+
+    def __call__(self, x):
+        tx = self.conv(x)
+        t_mean, t_sigma = tf.nn.moments(tx, axes=[1, 2], keepdims=True)
+        in_mean, in_sigma = tf.nn.moments(x, axes=[1, 2], keepdims=True)
+        x_in = (x - in_mean) / (tf.sqrt(in_sigma + self.eps))
+        x = x_in * (tf.sqrt(t_sigma + self.eps)) + t_mean
+        return x
+
+
+class ConvLADELrelu(tf.Module):
+    """Conv + LADE + LeakyReLU block."""
+    def __init__(self, in_channels, filters, kernel_size=3, strides=1, name='conv_LADE'):
+        super().__init__(name=name)
+        self.conv = Conv2DLayer(in_channels, filters, kernel_size, strides, name='conv')
+        self.lade = LADE_Layer(filters, name='LADE')
+
+    def __call__(self, x):
+        x = self.conv(x)
+        x = self.lade(x)
+        return lrelu(x)
+
+
+class ExternalAttentionV3(tf.Module):
+    """External Attention module."""
+    def __init__(self, in_channels, k=128, name='External_attention'):
+        super().__init__(name=name)
+        c = in_channels
+        self.conv1 = Conv2DLayer(c, c, 1, 1, name='conv1')
+        self.w_kernel = tf.Variable(
+            weight_init([1, c, k]),
+            name='kernel')
+        self.conv2 = Conv2DLayer(c, c, 1, 1, name='conv2')
+        self.bn = BatchNorm(c, name='bn')
+        self.c = c
+
+    def __call__(self, x, is_training):
+        idn = x
+        b = tf.shape(x)[0]
+        h = tf.shape(x)[1]
+        w = tf.shape(x)[2]
+        c = self.c
+
+        x = self.conv1(x)
+        x = tf.reshape(x, shape=[b, -1, c])
+        attn = tf.nn.conv1d(x, self.w_kernel, stride=1, padding='VALID')
+        attn = tf.nn.softmax(attn, axis=1)
+        attn = attn / (1e-9 + tf.reduce_sum(attn, axis=2, keepdims=True))
+
+        w_kernel_t = tf.transpose(self.w_kernel, perm=[0, 2, 1])
+        x = tf.nn.conv1d(attn, w_kernel_t, stride=1, padding='VALID')
+        x = tf.reshape(x, [b, h, w, c])
+        x = self.conv2(x)
+        x = self.bn(x, is_training)
+        x = x + idn
+        out = lrelu(x)
+        return out
 
 
 ##################################################################################
@@ -240,7 +308,7 @@ def Conv2d_IN_LReLU(inputs, filters, kernel_size=3, strides=1, name=None, paddin
 ##################################################################################
 
 def flatten(x):
-    return tf.compat.v1.layers.flatten(x)
+    return tf.reshape(x, [tf.shape(x)[0], -1])
 
 
 def global_avg_pooling(x, keepdims=True):
@@ -252,87 +320,6 @@ def global_max_pooling(x, keepdims=True):
     gmp = tf.reduce_max(x, axis=[1, 2], keepdims=keepdims)
     return gmp
 
-
-"""Attention"""
-
-
-def External_attention_v3(x, is_training, k=128, scope='External_attention'):
-    idn = x
-    b, h, w, c = tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2], x.shape[-1]
-    with tf.variable_scope(scope):
-        w_kernel = tf.get_variable("kernel", [
-                                   1, c, k], tf.float32, initializer=weight_init, regularizer=weight_regularizer)
-        x = Conv2D(x, c, 1, 1, scope='conv1')
-        x = tf.reshape(x, shape=[b, -1, c])
-        attn = tf.nn.conv1d(x, w_kernel, stride=1, padding='VALID')
-        attn = tf.nn.softmax(attn, axis=1)
-        attn = attn / (1e-9 + tf.reduce_sum(attn, axis=2, keepdims=True))
-    # with tf.variable_scope(scope, reuse=True):
-        w_kernel = tf.transpose(w_kernel, perm=[0, 2, 1])
-        x = tf.nn.conv1d(attn, w_kernel, stride=1, padding='VALID')
-        x = tf.reshape(x, [b, h, w, c])
-        x = Conv2D(x, c, 1, 1, scope='conv2')
-        x = batch_norm(x, is_training, scope='bn')
-        # x = LADE(x)
-        # x = layer_norm(x)
-        # x = instance_norm(x)
-        # x = batch_norm(x, is_training)
-        x = x + idn
-        out = lrelu(x)
-    return out
-
-
-def External_attention(x, is_training, k=64, scope='External_attention'):
-    idn = x
-    b, h, w, c = tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2], x.shape[-1]
-    with tf.variable_scope(scope):
-        w_kernel = tf.get_variable("mk_kernel", [
-                                   1, c, k], tf.float32, initializer=weight_init, regularizer=weight_regularizer)
-        x = Conv2D(x, c, 1, 1,)
-        x = tf.reshape(x, shape=[b, -1, c])
-        attn = tf.nn.conv1d(x, w_kernel, 1, 'VALID')
-        attn = tf.nn.softmax(attn, axis=1)
-        attn = attn / (1e-9 + tf.reduce_sum(attn, axis=2, keepdims=True))
-
-        w_kernel = tf.get_variable("mv_kernel", [
-                                   1, k, c], tf.float32, initializer=weight_init, regularizer=weight_regularizer)
-        x = tf.nn.conv1d(attn, w_kernel, 1, 'VALID')
-        x = tf.reshape(x, [b, h, w, c])
-        x = Conv2D(x, c, 1, 1)
-        x = batch_norm_wrapper(x, is_training)
-        x = x + idn
-        out = lrelu(x)
-    return out
-
-
-def LADE_D(x, sn=False, name=''):
-    eps = 1e-5
-    ch = x.shape[-1]
-    tx = conv(x, ch, 1, 1, sn=sn, scope=name+'_conv_IN')
-    t_mean, t_sigma = tf.nn.moments(tx, axes=[1, 2], keep_dims=True)
-    in_mean, in_sigma = tf.nn.moments(x, axes=[1, 2], keep_dims=True)
-    x_in = (x - in_mean) / (tf.sqrt(in_sigma + eps))
-    x = x_in * (tf.sqrt(t_sigma + eps)) + t_mean
-    return x
-
-
-def LADE(x, scope='LADE'):
-    eps = 1e-5
-    ch = x.shape[-1]
-    with tf.variable_scope(scope):
-        tx = Conv2D(x, ch, 1, 1, scope='conv_IN')
-        t_mean, t_sigma = tf.nn.moments(tx, axes=[1, 2], keep_dims=True)
-        in_mean, in_sigma = tf.nn.moments(x, axes=[1, 2], keep_dims=True)
-        x_in = (x - in_mean) / (tf.sqrt(in_sigma + eps))
-        x = x_in * (tf.sqrt(t_sigma + eps)) + t_mean
-        return x
-
-
-def conv_LADE_Lrelu(inputs, filters, kernel_size=3, strides=1, scope='conv_LADE'):
-    with tf.variable_scope(scope):
-        x = Conv2D(inputs, filters, kernel_size, strides, scope='conv')
-        x = LADE(x, scope='LADE')
-        return lrelu(x)
 
 ##################################################################################
 # Loss function
@@ -350,22 +337,7 @@ def L2_loss(x, y):
 
 
 def Huber_loss(x, y, delta=1.0):
-    return tf.compat.v1.losses.huber_loss(x, y, delta=delta)
-
-
-def regularization_loss(scope_name):
-    """
-    If you want to use "Regularization"
-    g_loss += regularization_loss('generator')
-    d_loss += regularization_loss('discriminator')
-    """
-    collection_regularization = tf.get_collection(
-        tf.GraphKeys.REGULARIZATION_LOSSES)
-    loss = []
-    for item in collection_regularization:
-        if scope_name in item.name:
-            loss.append(item)
-    return tf.reduce_sum(loss)
+    return tf.reduce_mean(tf.keras.losses.huber(x, y, delta=delta))
 
 
 def generator_loss(fake):
@@ -377,7 +349,6 @@ def discriminator_loss(anime_logit, fake_logit):
     # lsgan :
     anime_gray_logit_loss = tf.reduce_mean(tf.square(anime_logit - 0.9))
     fake_gray_logit_loss = tf.reduce_mean(tf.square(fake_logit-0.1))
-    # loss =   0.5 * anime_gray_logit_loss  \ # Hayao
     loss = 0.5 * anime_gray_logit_loss  \
         + 1.0 * fake_gray_logit_loss
     return loss
@@ -429,7 +400,7 @@ def VGG_LOSS(x, y):
     # The number of feature channels in layer 4-4 of vgg19 is 512
     x = vgg19.build(x)
     y = vgg19.build(y)
-    c = x.get_shape().as_list()[-1]
+    c = x.shape[-1]
     return L1_loss(x, y)/tf.cast(c, tf.float32)
 
 
@@ -444,24 +415,24 @@ def region_smoothing_loss(seg, fake, weight):
 def style_loss(style, fake, weight):
     style_feat = vgg19.build(style)
     fake_feat = vgg19.build(fake)
-    return weight * L1_loss(gram(style_feat), gram(fake_feat))/tf.cast(style_feat.get_shape().as_list()[-1], tf.float32)
+    return weight * L1_loss(gram(style_feat), gram(fake_feat))/tf.cast(style_feat.shape[-1], tf.float32)
 
 
 def style_loss_decentralization_3(style, fake, weight):
     style_4, style_3, style_2 = vgg19.build_multi(style)
     fake_4, fake_3, fake_2 = vgg19.build_multi(fake)
     dim = [1, 2]
-    style_2 -= tf.reduce_mean(style_2, axis=dim, keep_dims=True)
-    fake_2 -= tf.reduce_mean(fake_2, axis=dim, keep_dims=True)
-    c_2 = fake_2.get_shape().as_list()[-1]
+    style_2 -= tf.reduce_mean(style_2, axis=dim, keepdims=True)
+    fake_2 -= tf.reduce_mean(fake_2, axis=dim, keepdims=True)
+    c_2 = fake_2.shape[-1]
 
-    style_3 -= tf.reduce_mean(style_3, axis=dim, keep_dims=True)
-    fake_3 -= tf.reduce_mean(fake_3, axis=dim, keep_dims=True)
-    c_3 = fake_3.get_shape().as_list()[-1]
+    style_3 -= tf.reduce_mean(style_3, axis=dim, keepdims=True)
+    fake_3 -= tf.reduce_mean(fake_3, axis=dim, keepdims=True)
+    c_3 = fake_3.shape[-1]
 
-    style_4 -= tf.reduce_mean(style_4, axis=dim, keep_dims=True)
-    fake_4 -= tf.reduce_mean(fake_4, axis=dim, keep_dims=True)
-    c_4 = fake_4.get_shape().as_list()[-1]
+    style_4 -= tf.reduce_mean(style_4, axis=dim, keepdims=True)
+    fake_4 -= tf.reduce_mean(fake_4, axis=dim, keepdims=True)
+    c_4 = fake_4.shape[-1]
 
     loss4_4 = L1_loss(gram(style_4), gram(fake_4))/tf.cast(c_4, tf.float32)
     loss3_3 = L1_loss(gram(style_3), gram(fake_3))/tf.cast(c_3, tf.float32)
@@ -487,8 +458,8 @@ def total_variation_loss(inputs):
     """
     dh = inputs[:, :-1, ...] - inputs[:, 1:, ...]
     dw = inputs[:, :, :-1, ...] - inputs[:, :, 1:, ...]
-    size_dh = tf.size(dh, out_type=tf.float32)
-    size_dw = tf.size(dw, out_type=tf.float32)
+    size_dh = tf.cast(tf.size(dh), tf.float32)
+    size_dw = tf.cast(tf.size(dw), tf.float32)
     return tf.nn.l2_loss(dh) / size_dh + tf.nn.l2_loss(dw) / size_dw
 
 

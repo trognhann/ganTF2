@@ -1,8 +1,7 @@
 import cv2
 import os
 import numpy as np
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
+import tensorflow as tf
 
 
 def img_resize(img, limit=1280):
@@ -52,12 +51,19 @@ def imsave(images, path):
     return cv2.imwrite(path, cv2.cvtColor(images, cv2.COLOR_BGR2RGB))
 
 
-def show_all_variables():
-    model_vars = tf.trainable_variables()
-    print('G:')
-    for var in model_vars:
-        if var.name.startswith('generator') and 'Adam' not in var.name:
-            print(f"{var.name} {var.shape}")
+def show_all_variables(generator, discriminator_support=None, discriminator_main=None):
+    """Print all trainable variables in the given models."""
+    print('Generator variables:')
+    for var in generator.trainable_variables:
+        print(f"  {var.name} {var.shape}")
+    if discriminator_support is not None:
+        print('Discriminator (support) variables:')
+        for var in discriminator_support.trainable_variables:
+            print(f"  {var.name} {var.shape}")
+    if discriminator_main is not None:
+        print('Discriminator (main) variables:')
+        for var in discriminator_main.trainable_variables:
+            print(f"  {var.name} {var.shape}")
 
 
 def check_folder(log_dir):
@@ -98,18 +104,3 @@ def gaussian_blur(img, kernel_size=7, sigma=5., ch=3):
     blur = _gaussian_kernel(kernel_size, sigma, ch, img.dtype)
     img = tf.nn.depthwise_conv2d(img, blur, [1, 1, 1, 1], 'SAME')
     return img
-
-
-if __name__ == "__main__":
-    path = '../dataset/val/1.jpg'
-    image_foder = '../dataset/Hayao/style/11.jpg'
-    Im = cv2.imread(image_foder).astype(np.float32)
-    Im = np.expand_dims(Im, axis=0)
-    a = gaussian_blur(tf.convert_to_tensor(Im))
-    with tf.Session() as sess:
-        S = sess.run(a)
-    S = np.squeeze(S)
-    # S=S.clip(0,1)
-    print(type(S[0, 0, 0]), S.max(), S.min())
-    cv2.imshow('a', S.astype(np.uint8))
-    cv2.waitKey(0)

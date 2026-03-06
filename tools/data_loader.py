@@ -1,8 +1,7 @@
 import os
-import sys
-import tensorflow.compat.v1 as tf
 import cv2
 import numpy as np
+import tensorflow as tf
 
 
 class ImageGenerator(object):
@@ -29,19 +28,21 @@ class ImageGenerator(object):
         return paths
 
     def read_image(self, img_path):
+        if isinstance(img_path, bytes):
+            img_path = img_path.decode()
 
-        if 'style' in img_path.decode() or 'smooth' in img_path.decode():
+        if 'style' in img_path or 'smooth' in img_path:
             # color image1
-            image = cv2.imread(img_path.decode())
+            image = cv2.imread(img_path)
             image1 = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
 
             image2 = np.zeros(image1.shape).astype(np.float32)
         else:
             # real photo
-            image = cv2.imread(img_path.decode())
+            image = cv2.imread(img_path)
             image1 = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
             # Color segmentation (ie. region smooth) photo
-            image = cv2.imread(img_path.decode().replace(
+            image = cv2.imread(img_path.replace(
                 'train_photo', "seg_train_5-0.8-50"))
             image2 = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
         return image1, image2
@@ -53,21 +54,20 @@ class ImageGenerator(object):
         return (processing_image1, processing_image2)
 
     def load_images(self):
-
         dataset = tf.data.Dataset.from_tensor_slices(self.paths)
 
         # Repeat indefinitely
         dataset = dataset.repeat()
 
-        # Unform shuffle
+        # Uniform shuffle
         dataset = dataset.shuffle(buffer_size=len(self.paths))
 
-        # Map path to image
-        dataset = dataset.map(lambda img_path: tf.py_func(self.process_image, [
-                              img_path], [tf.float32, tf.float32]), self.num_cpus)
+        # Map path to image  (tf.py_function instead of tf.py_func)
+        dataset = dataset.map(
+            lambda img_path: tf.py_function(
+                self.process_image, [img_path], [tf.float32, tf.float32]),
+            num_parallel_calls=self.num_cpus)
 
         dataset = dataset.batch(self.batch_size)
 
-        img1, img2 = dataset.make_one_shot_iterator().get_next()
-
-        return img1, img2
+        return dataset
