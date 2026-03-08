@@ -17,7 +17,7 @@ from net.discriminator import Discriminator
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Export AnimeGANv3 Generator to ONNX')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoint/shinkai',
+    parser.add_argument('--checkpoint_dir', type=str, default=r'checkpoint\shinkai',
                         help='Directory containing the TF2 checkpoint')
     parser.add_argument('--output', type=str, default=None,
                         help='Output ONNX file path (default: <checkpoint_dir>/generator.onnx)')

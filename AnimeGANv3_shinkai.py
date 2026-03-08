@@ -146,9 +146,9 @@ class AnimeGANv3(object):
             generated_m_logit = self.disc_main(generated_m)
 
             # Losses
-            _con_loss = con_loss(real_photo, generated, 0.5)
+            _con_loss = con_loss(real_photo, generated, 1.5)
             s22, s33, s44 = style_loss_decentralization_3(
-                anime_sty_gray, fake_sty_gray, [0.1, 2.0, 28])
+                anime_sty_gray, fake_sty_gray, [1.0, 5.0, 15])
             _sty_loss = s22 + s33 + s44
             _rs_loss = region_smoothing_loss(fake_superpixel, generated, 0.8) + \
                 VGG_LOSS(photo_superpixel, generated) * 0.5
